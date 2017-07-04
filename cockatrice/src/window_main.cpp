@@ -19,6 +19,7 @@
  ***************************************************************************/
 #include <QMenu>
 #include <QAction>
+#include <iostream>
 #include <QCloseEvent>
 #include <QMessageBox>
 #include <QMenuBar>
@@ -59,6 +60,7 @@
 #include "pb/room_commands.pb.h"
 #include "pb/event_connection_closed.pb.h"
 #include "pb/event_server_shutdown.pb.h"
+#include "SpoilerBackgroundUpdaterThread.h"
 
 #define GITHUB_PAGES_URL "https://cockatrice.github.io"
 #define GITHUB_CONTRIBUTORS_URL "https://github.com/Cockatrice/Cockatrice/graphs/contributors?type=c"
@@ -699,7 +701,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     resize(900, 700);
     restoreGeometry(settingsCache->getMainWindowGeometry());
-    aFullScreen->setChecked(windowState() & Qt::WindowFullScreen);
+    aFullScreen->setChecked(static_cast<bool>(windowState() & Qt::WindowFullScreen));
 
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         createTrayActions();
@@ -1027,14 +1029,14 @@ void MainWindow::actAddCustomSet()
     if (!dialog.exec())
         return;
 
-    QString fileName = dialog.selectedFiles().at(0);
+    QString fullFilePath = dialog.selectedFiles().at(0);
 
-    if (!QFile::exists(fileName)) {
+    if (!QFile::exists(fullFilePath)) {
         QMessageBox::warning(this, tr("Load sets/cards"), tr("Selected file cannot be found."));
         return;
     }
 
-    if (QFileInfo(fileName).suffix() != "xml") { // fileName = *.xml
+    if (QFileInfo(fullFilePath).suffix() != "xml") { // fileName = *.xml
         QMessageBox::warning(this, tr("Load sets/cards"), tr("You can only import XML databases at this time."));
         return;
     }
@@ -1042,15 +1044,38 @@ void MainWindow::actAddCustomSet()
     QDir dir = settingsCache->getCustomCardDatabasePath();
     int nextPrefix = getNextCustomSetPrefix(dir);
 
-    bool res = QFile::copy(
-        fileName, dir.absolutePath() + "/" + (nextPrefix > 9 ? "" : "0") +
-        QString::number(nextPrefix) + "." + QFileInfo(fileName).fileName()
-    );
+    bool res = false;
 
-    if (res) {
+    QString fileName = QFileInfo(fullFilePath).fileName();
+    if (fileName.compare("spoiler.xml", Qt::CaseInsensitive) == 0)
+    {
+        /*
+         * If the file being added is "spoiler.xml"
+         * then we'll want to overwrite the old version
+         * and replace it with the new one
+         */
+        if (QFile::exists(dir.absolutePath() + "/spoiler.xml"))
+        {
+            QFile::remove(dir.absolutePath() + "/spoiler.xml");
+        }
+
+        res = QFile::copy(fullFilePath, dir.absolutePath() + "/spoiler.xml");
+    }
+    else
+    {
+        res = QFile::copy(
+                fullFilePath,
+                dir.absolutePath() + "/" + (nextPrefix > 9 ? "" : "0") + QString::number(nextPrefix) + "." + fileName
+        );
+    }
+
+    if (res)
+    {
         QMessageBox::information(this, tr("Load sets/cards"), tr("The new sets/cards have been added successfully.\nCockatrice will now reload the card database."));
         QtConcurrent::run(db, &CardDatabase::loadCardDatabases);
-    } else {
+    }
+    else
+    {
         QMessageBox::warning(this, tr("Load sets/cards"), tr("Sets/cards failed to import."));
     }
 }
